@@ -11,6 +11,8 @@ use winit::{
 
 use wgpu::util::DeviceExt; // brings create_buffer_init into scope
 
+use glam::{Quat, Vec3};
+
 struct State {
     window: Arc<Window>,
     device: wgpu::Device,
@@ -24,6 +26,9 @@ struct State {
     light_pos: [f32; 2],
     light_buf: wgpu::Buffer,
     light_bind_group: wgpu::BindGroup,
+    orientation: [f32; 4], // quaternion
+    orientation_buf: wgpu::Buffer,
+    orientation_bind_group: wgpu::BindGroup,
 }
 
 impl State {
@@ -110,10 +115,39 @@ impl State {
             label: Some("Light Bind Group"),
         });
 
+        let orientation = [0.0, 0.0, 0.0, 1.0];
+        let orientation_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Orientation Buffer"),
+            contents: bytemuck::cast_slice(&orientation),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let orientation_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Orientation BGL"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+        let orientation_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &orientation_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: orientation_buf.as_entire_binding(),
+            }],
+            label: Some("Orientation Bind Group"),
+        });
+
         // Pipeline layout
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
-            bind_group_layouts: &[&aspect_bind_group_layout, &light_bind_group_layout],
+            bind_group_layouts: &[&aspect_bind_group_layout, &light_bind_group_layout, &orientation_bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -157,6 +191,9 @@ impl State {
             light_pos,
             light_buf,
             light_bind_group,
+            orientation,
+            orientation_buf,
+            orientation_bind_group,
         };
 
         // Configure surface for the first time
@@ -226,6 +263,7 @@ impl State {
             rpass.set_pipeline(&self.render_pipeline);
             rpass.set_bind_group(0, &self.aspect_bind_group, &[]);
             rpass.set_bind_group(1, &self.light_bind_group, &[]);
+            rpass.set_bind_group(2, &self.orientation_bind_group, &[]);
             // Draw 3 vertices → our full-screen triangle
             rpass.draw(0..3, 0..1);
         }
@@ -266,26 +304,68 @@ impl ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => {
                 if let Some(state) = self.state.as_mut() {
-                    let delta = 0.05;
+                    let light_delta = 0.05;
+                    let angle_delta = 0.02;
+
+                    let mut orient: Quat = Quat::from_array(state.orientation);
 
                     if self.keys_held.contains(&Key::Named(NamedKey::ArrowLeft)) {
-                        state.light_pos[0] -= delta;
+                        state.light_pos[0] -= light_delta;
                     }
                     if self.keys_held.contains(&Key::Named(NamedKey::ArrowRight)) {
-                        state.light_pos[0] += delta;
+                        state.light_pos[0] += light_delta;
                     }
                     if self.keys_held.contains(&Key::Named(NamedKey::ArrowUp)) {
-                        state.light_pos[1] += delta;
+                        state.light_pos[1] += light_delta;
                     }
                     if self.keys_held.contains(&Key::Named(NamedKey::ArrowDown)) {
-                        state.light_pos[1] -= delta;
+                        state.light_pos[1] -= light_delta;
                     }
+                    if self.keys_held.contains(&Key::Character("a".into())) {
+                        let axis = orient * Vec3::Y;
+                        let dq = Quat::from_axis_angle(axis, angle_delta);
+                        orient = (dq * orient).normalize();
+                    }
+                    if self.keys_held.contains(&Key::Character("d".into())) {
+                        let axis = orient * Vec3::Y;
+                        let dq = Quat::from_axis_angle(axis, -angle_delta);
+                        orient = (dq * orient).normalize();
+                    }
+                    if self.keys_held.contains(&Key::Character("w".into())) {
+                        let axis = orient * Vec3::X;
+                        let dq = Quat::from_axis_angle(axis, angle_delta);
+                        orient = (dq * orient).normalize();
+                    }
+                    if self.keys_held.contains(&Key::Character("s".into())) {
+                        let axis = orient * Vec3::X;
+                        let dq = Quat::from_axis_angle(axis, -angle_delta);
+                        orient = (dq * orient).normalize();
+                    }
+                    if self.keys_held.contains(&Key::Character("q".into())) {
+                        let axis = orient * Vec3::Z;
+                        let dq = Quat::from_axis_angle(axis, angle_delta);
+                        orient = (dq * orient).normalize();
+                    }
+                    if self.keys_held.contains(&Key::Character("e".into())) {
+                        let axis = orient * Vec3::Z;
+                        let dq = Quat::from_axis_angle(axis, -angle_delta);
+                        orient = (dq * orient).normalize();
+                    }
+
 
                     state.queue.write_buffer(
                         &state.light_buf,
                         0,
                         bytemuck::cast_slice(&[state.light_pos]),
                     );
+
+                    state.orientation = orient.to_array();
+                    state.queue.write_buffer(
+                        &state.orientation_buf,
+                        0,
+                        bytemuck::cast_slice(&state.orientation), // see note below
+                    );
+
                     state.render();
                     state.get_window().request_redraw(); // loop
                 }

@@ -8,32 +8,29 @@ struct VertexOut {
 };
 
 // Bind group 0, binding 0: a single float uniform
-@group(0) @binding(0) var<uniform> aspect : f32;          // (width/height)
-@group(1) @binding(0) var<uniform> light_pos : vec2<f32>; // (x,y)
+@group(0) @binding(0) var<uniform> aspect : f32;            // (width/height)
+@group(1) @binding(0) var<uniform> light_pos : vec2<f32>;   // (x,y)
+@group(2) @binding(0) var<uniform> orientation : vec4<f32>; // (x,y,z,w)
 
 fn deg_to_rad(deg : f32) -> f32 { return deg * PI / 180.0; }
 
+fn rotate_by_quat(v : vec3<f32>) -> vec3<f32> {
+  let qv = orientation.xyz;
+  let t = 2.0 * cross(qv, v);
+  return v + orientation.w * t + cross(qv, t);
+}
 fn sdf_sphere(p : vec3<f32>) -> f32 { return length(p) - 1.0; }
 
 fn sdf_box(p : vec3<f32>) -> f32 {
   let b_size = 0.5;
   let b = vec3<f32>(b_size, b_size, b_size);
 
-  let x_rot = deg_to_rad(30.0);
-  let y_rot = deg_to_rad(10.0);
+  // Rotate around arbitrary axis
+  let axis = normalize(vec3<f32>(1.0, 1.0, 0.0)); // for example
+  let angle = deg_to_rad(45.0);                   // degrees to radians
+  let p_rot = p;                                  // rotate_by_quat(p);
 
-  let cx = cos(x_rot);
-  let sx = sin(x_rot);
-  let cy = cos(y_rot);
-  let sy = sin(y_rot);
-
-  // Rotate around X
-  let px = vec3<f32>(p.x, cx * p.y - sx * p.z, sx * p.y + cx * p.z);
-
-  // Rotate around Y
-  let py = vec3<f32>(cy * px.x + sy * px.z, px.y, -sy * px.x + cy * px.z);
-
-  let q = abs(py) - b;
+  let q = abs(p_rot) - b;
   return length(max(q, vec3<f32>(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0);
 }
 
@@ -103,11 +100,13 @@ fn sdf_blob(p_in : vec3<f32>) -> f32 {
 }
 
 fn sdf(p : vec3<f32>) -> f32 {
-  // return sdf_sphere(p);
-  // return sdf_box(p);
-  // return sdf_hollow(p);
-  // return sdf_mandelbulb(p);
-  return sdf_blob(p);
+  let op = rotate_by_quat(p); // orient_p(p, orientation);
+
+  // return sdf_sphere(op);
+  // return sdf_box(op);
+  // return sdf_hollow(op);
+  // return sdf_mandelbulb(op);
+  return sdf_blob(op);
 }
 
 fn ray_march(origin : vec3<f32>, dir : vec3<f32>) -> f32 {
