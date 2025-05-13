@@ -1,13 +1,14 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use winit::{
     application::ApplicationHandler,
-    event::WindowEvent,
+    event::{ElementState, KeyEvent, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    keyboard::{Key, NamedKey},
     window::{Window, WindowId},
 };
 
-use bytemuck::cast_slice;
 use wgpu::util::DeviceExt; // brings create_buffer_init into scope
 
 struct State {
@@ -20,6 +21,9 @@ struct State {
     render_pipeline: wgpu::RenderPipeline,
     aspect_bind_group: wgpu::BindGroup,
     aspect_buf: wgpu::Buffer,
+    light_pos: [f32; 2],
+    light_buf: wgpu::Buffer,
+    light_bind_group: wgpu::BindGroup,
 }
 
 impl State {
@@ -41,7 +45,7 @@ impl State {
         let surface_format = cap.formats[0];
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Sphere Shader"),
+            label: Some("Raymarcher Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
 
@@ -75,16 +79,47 @@ impl State {
             label: Some("aspect_bg"),
         });
 
+        let light_pos = [0.0, 0.0];
+        let light_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Light Buffer"),
+            contents: bytemuck::cast_slice(&light_pos),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let light_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Light BGL"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+        let light_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &light_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: light_buf.as_entire_binding(),
+            }],
+            label: Some("Light Bind Group"),
+        });
+
         // Pipeline layout
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
-            bind_group_layouts: &[&aspect_bind_group_layout],
+            bind_group_layouts: &[&aspect_bind_group_layout, &light_bind_group_layout],
             push_constant_ranges: &[],
         });
 
         // Create render pipeline
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Sphere Pipeline"),
+            label: Some("Raymarcher Pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
@@ -119,6 +154,9 @@ impl State {
             render_pipeline,
             aspect_bind_group,
             aspect_buf,
+            light_pos,
+            light_buf,
+            light_bind_group,
         };
 
         // Configure surface for the first time
@@ -187,6 +225,7 @@ impl State {
 
             rpass.set_pipeline(&self.render_pipeline);
             rpass.set_bind_group(0, &self.aspect_bind_group, &[]);
+            rpass.set_bind_group(1, &self.light_bind_group, &[]);
             // Draw 3 vertices → our full-screen triangle
             rpass.draw(0..3, 0..1);
         }
@@ -200,6 +239,7 @@ impl State {
 #[derive(Default)]
 struct App {
     state: Option<State>,
+    keys_held: HashSet<Key>,
 }
 
 impl ApplicationHandler for App {
@@ -225,15 +265,53 @@ impl ApplicationHandler for App {
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
-                state.render();
-                // Emits a new redraw requested event.
-                state.get_window().request_redraw();
+                if let Some(state) = self.state.as_mut() {
+                    let delta = 0.05;
+
+                    if self.keys_held.contains(&Key::Named(NamedKey::ArrowLeft)) {
+                        state.light_pos[0] -= delta;
+                    }
+                    if self.keys_held.contains(&Key::Named(NamedKey::ArrowRight)) {
+                        state.light_pos[0] += delta;
+                    }
+                    if self.keys_held.contains(&Key::Named(NamedKey::ArrowUp)) {
+                        state.light_pos[1] += delta;
+                    }
+                    if self.keys_held.contains(&Key::Named(NamedKey::ArrowDown)) {
+                        state.light_pos[1] -= delta;
+                    }
+
+                    state.queue.write_buffer(
+                        &state.light_buf,
+                        0,
+                        bytemuck::cast_slice(&[state.light_pos]),
+                    );
+                    state.render();
+                    state.get_window().request_redraw(); // loop
+                }
             }
             WindowEvent::Resized(size) => {
                 // Reconfigures the size of the surface. We do not re-render
                 // here as this event is always followed up by redraw request.
                 state.resize(size);
             }
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        logical_key: key,
+                        state: key_state,
+                        ..
+                    },
+                ..
+            } => match key_state {
+                ElementState::Pressed => {
+                    self.keys_held.insert(key.clone());
+                }
+                ElementState::Released => {
+                    self.keys_held.remove(&key);
+                }
+            },
+
             _ => (),
         }
     }

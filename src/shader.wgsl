@@ -5,8 +5,8 @@ struct VertexOut {
 };
 
 // Bind group 0, binding 0: a single float uniform
-@group(0) @binding(0) var<uniform> aspect
-    : f32; // the aspect ratio (width/height)
+@group(0) @binding(0) var<uniform> aspect : f32;          // (width/height)
+@group(1) @binding(0) var<uniform> light_pos : vec2<f32>; // (x,y)
 
 @vertex fn vs_main(@builtin(vertex_index) vi : u32) -> VertexOut {
   // Full-screen triangle via vertex_index hack
@@ -41,7 +41,7 @@ struct VertexOut {
   let n = normalize(p);
 
   // Simple lambert shading
-  let light = normalize(vec3<f32>(1.0, 1.0, 1.0));
+  let light = normalize(vec3<f32>(light_pos, 1.0));
   let diff = max(dot(n, light), 0.0);
   return vec4<f32>(diff, diff, diff, 1.0);
 }
