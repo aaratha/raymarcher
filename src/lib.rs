@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Instant;
 
 use winit::{
     application::ApplicationHandler,
@@ -29,6 +30,10 @@ struct State {
     orientation: [f32; 4], // quaternion
     orientation_buf: wgpu::Buffer,
     orientation_bind_group: wgpu::BindGroup,
+    start_time: Instant,
+    time: f32,
+    time_buf: wgpu::Buffer,
+    time_bind_group: wgpu::BindGroup,
 }
 
 impl State {
@@ -144,10 +149,40 @@ impl State {
             label: Some("Orientation Bind Group"),
         });
 
+        let start_time = Instant::now();
+        let time = start_time.elapsed().as_secs_f32();
+        let time_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Time Buffer"),
+            contents: bytemuck::cast_slice(&[0.0]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let time_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Time BGL"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+        let time_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &time_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: time_buf.as_entire_binding(),
+            }],
+            label: Some("Time Bind Group"),
+        });
+
         // Pipeline layout
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
-            bind_group_layouts: &[&aspect_bind_group_layout, &light_bind_group_layout, &orientation_bind_group_layout],
+            bind_group_layouts: &[&aspect_bind_group_layout, &light_bind_group_layout, &orientation_bind_group_layout, &time_bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -194,6 +229,10 @@ impl State {
             orientation,
             orientation_buf,
             orientation_bind_group,
+            start_time,
+            time: time,
+            time_buf,
+            time_bind_group,
         };
 
         // Configure surface for the first time
@@ -264,6 +303,7 @@ impl State {
             rpass.set_bind_group(0, &self.aspect_bind_group, &[]);
             rpass.set_bind_group(1, &self.light_bind_group, &[]);
             rpass.set_bind_group(2, &self.orientation_bind_group, &[]);
+            rpass.set_bind_group(3, &self.time_bind_group, &[]);
             // Draw 3 vertices → our full-screen triangle
             rpass.draw(0..3, 0..1);
         }
@@ -306,6 +346,8 @@ impl ApplicationHandler for App {
                 if let Some(state) = self.state.as_mut() {
                     let light_delta = 0.05;
                     let angle_delta = 0.02;
+
+                    state.time = state.start_time.elapsed().as_secs_f32();
 
                     let mut orient: Quat = Quat::from_array(state.orientation);
 
@@ -364,6 +406,11 @@ impl ApplicationHandler for App {
                         &state.orientation_buf,
                         0,
                         bytemuck::cast_slice(&state.orientation), // see note below
+                    );
+                    state.queue.write_buffer(
+                        &state.time_buf,
+                        0,
+                        bytemuck::cast_slice(&[state.time]),
                     );
 
                     state.render();

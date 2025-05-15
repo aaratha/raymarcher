@@ -11,6 +11,7 @@ struct VertexOut {
 @group(0) @binding(0) var<uniform> aspect : f32;            // (width/height)
 @group(1) @binding(0) var<uniform> light_pos : vec2<f32>;   // (x,y)
 @group(2) @binding(0) var<uniform> orientation : vec4<f32>; // (x,y,z,w)
+@group(3) @binding(0) var<uniform> time : f32;
 
 fn deg_to_rad(deg : f32) -> f32 { return deg * PI / 180.0; }
 
@@ -94,7 +95,11 @@ fn sdf_blob(p_in : vec3<f32>) -> f32 {
 
   let l = length(p);
   let r = 1.0; // radius
-  let a = 0.2; // amplitude
+  let a_min = 0.1;
+  let a_max = 0.3; // amplitude
+  let f = 5.0;     // frequency
+  let a =
+      a_min + (a_max - a_min) * 0.5 * (1 + sin(f * time)); // animate the blob
   // Final SDF: base sphere minus a cosine‐modulated “blob” term
   return l - r - a * (r / 2.0) * cos(min(sqrt(1.01 - b / l) * (PI / 0.25), PI));
 }
